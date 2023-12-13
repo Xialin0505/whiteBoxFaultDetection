@@ -1,3 +1,6 @@
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -6,6 +9,7 @@ import java.nio.channels.AsynchronousSocketChannel;
 import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Scanner;
@@ -34,14 +38,21 @@ public class GlobalFaultDetector extends Thread{
     private List<String> membership; // server id
     private HashMap <String, Thread> lfds; // lfd id
     private HashMap <String, String> serverInfo;
+    private HashMap <String, Integer> lfdsidx;
     private int memberCount = 0;
-    private String primaryAddress;
-    private int primaryPort;
-    private String primaryServerID;
+    private int lfdCount = 0;
     private String primaryLFD;
     private String RMIP;
     private int RMPort;
     private String RMID = "RM";
+
+    private double[] maxLatencyLFD = {0, 0, 0};
+    private double[] minLatencyLFD = {Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY};
+    private double[] avgLatencyLFD = {0, 0, 0};
+    private int[] messageCount = {0, 0, 0};
+    private String[] fileName = {"", "", ""};
+
+    private int logInterval = 10000;
 
     public static void main (String[] args) {
         GlobalFaultDetector gfd = new GlobalFaultDetector();
@@ -54,6 +65,7 @@ public class GlobalFaultDetector extends Thread{
         gfd.lfds = new HashMap<String, Thread>();
         gfd.membership = new ArrayList<String>();
         gfd.serverInfo = new HashMap<String, String>();
+        gfd.lfdsidx = new HashMap<String, Integer>();
         gfd.run();
     }
 
@@ -96,7 +108,6 @@ public class GlobalFaultDetector extends Thread{
                     String str = "";
                     // process things
                     String[] messageType = message.split(" ");
-                    System.out.println(message);
 
                     if (messageType[1].equals("delete")) {
                         logger.log(Level.INFO, "Received " + message, "Member");
@@ -106,6 +117,9 @@ public class GlobalFaultDetector extends Thread{
                         addMember(messageType);
                     } else if (messageType[1].equals("register")){
                         registerMember(messageType);
+                    } else if (messageType[2].contains("heartbeat")) {
+                        logger.log(Level.INFO, "Received " + message, true);
+                        str = processHeartbeatMessage(messageType);
                     }
 
                     Future<Integer> writeVal = client.write(ByteBuffer.wrap(str.getBytes()));
@@ -125,11 +139,21 @@ public class GlobalFaultDetector extends Thread{
 
     }
 
+    private String processHeartbeatMessage(String[] messageType){
+        String str = messageType[0] + " " + messageType[1] + " reply>";
+        return str;
+    }
+
     private void registerMember(String[] input){
         String lfdID = input[0].substring(1, input[0].length()-1);
         String[] addAndPort = input[3].split(":");
         String lfdaddress = addAndPort[0];
         int lfdport = Integer.parseInt(addAndPort[1].substring(0, addAndPort[1].length()-1));
+        lfdsidx.put(lfdID, lfdCount);
+        fileName[lfdCount] = "../log/" + lfdID + ".csv";
+        lfdCount ++;
+        
+        spawnLogThread(lfdsidx.get(lfdID));
         spawnPinThread(lfdID, lfdaddress, lfdport);
     }
 
@@ -319,6 +343,8 @@ public class GlobalFaultDetector extends Thread{
 
                 logger.log(Level.INFO, "Sent " + message, true);
 
+                long startTime = System.nanoTime();  
+
                 // end sending portion, wait for response
 
                 writeval.get();
@@ -336,6 +362,9 @@ public class GlobalFaultDetector extends Thread{
                     }
                     this.sleep(500);
                 }
+
+                double estimatedTime = (System.nanoTime() - startTime) / 1000000;
+                updateMetric(estimatedTime, lfdsidx.get(lfdID));
 
                 if (isTimeOut) {
                     // run timeout process
@@ -485,6 +514,23 @@ public class GlobalFaultDetector extends Thread{
         heartBeatUpdate = false;
     }
 
+    private void spawnLogThread(int server){
+        Thread logThread = new Thread(() -> {
+            logger.log(Level.INFO, "Spawn Log Thread");
+            while(!Thread.currentThread().isInterrupted()) {
+                try {
+                    writeLog(server);
+                    maxLatencyLFD[server] = 0;
+                    minLatencyLFD[server] = Double.POSITIVE_INFINITY;
+                    sleep(this.logInterval);
+                } catch (Exception e) {
+                    logger.log(Level.SEVERE, e.getMessage());
+                }
+            }
+        });
+        logThread.start();
+    }
+
     private void updateRM() {
         try (AsynchronousSocketChannel server = AsynchronousSocketChannel.open()) {
 
@@ -508,6 +554,39 @@ public class GlobalFaultDetector extends Thread{
         } catch (Exception e) {
             logger.log(Level.SEVERE, e.getMessage());
         }
+    }
+
+    private void updateMetric (double elapsedTime, int server) {
+        if (elapsedTime > this.maxLatencyLFD[server]) {
+            this.maxLatencyLFD[server] = elapsedTime;
+        }
+        if (elapsedTime < this.minLatencyLFD[server]) {
+            this.minLatencyLFD[server] = elapsedTime;
+        }
+        avgLatencyLFD[server] = (avgLatencyLFD[server] * this.messageCount[server] + elapsedTime) / (this.messageCount[server] + 1);
+        this.messageCount[server] += 1; 
+
+        logger.log(Level.INFO, "elapsed time: " + elapsedTime, "Member");
+    }
+
+    public void writeLog(int server) throws IOException {
+        if (this.minLatencyLFD[server] == Double.POSITIVE_INFINITY) {
+            return;
+        }
+        
+        Date date = new Date();
+        Timestamp timestamp = new Timestamp(date.getTime());
+        String currentTime = sdf3.format(timestamp);
+
+        File logFile = new File(fileName[server]);
+        logFile.getParentFile().mkdirs();
+        logFile.createNewFile(); 
+
+        BufferedWriter writer = new BufferedWriter(new FileWriter(fileName[server], true));
+        writer.append(currentTime + "," + this.minLatencyLFD[server] + "," + this.maxLatencyLFD[server] + "," + this.avgLatencyLFD[server]);
+        writer.append("\n");
+        
+        writer.close();
     }
 
 }

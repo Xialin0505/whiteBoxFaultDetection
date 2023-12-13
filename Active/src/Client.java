@@ -2,6 +2,7 @@ import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousSocketChannel;
 import java.net.*;
+import java.util.Date;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.sql.Timestamp;
@@ -9,7 +10,7 @@ import java.text.SimpleDateFormat;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
-public class Client {
+public class Client extends Thread {
     private static final SimpleDateFormat sdf3 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
     private Log logger = new Log(this.getClass().getName());
 
@@ -20,7 +21,13 @@ public class Client {
     private int[] serverPorts;
     private int requestNum;
 
-    // You can manually send messages from each client.
+    private double[] maxLatencyServer = {0, 0, 0};
+    private double[] minLatencyServer = {Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY};
+    private double[] avgLatencyServer = {0, 0, 0};
+    private int[] messageCount = {0, 0, 0};
+    private String[] fileName = {"", "", ""};
+
+    private int logInterval = 10000;
 
     public static void main(String[] args) {
         // 1st argument is the client name: C1/C2/C3
@@ -34,7 +41,12 @@ public class Client {
         client.serverAddresses = args[2].split(",");
         String[] ports = args[3].split(",");
         client.serverPorts = new int[ports.length];
-        for (int i = 0; i < client.serverNum; i++) client.serverPorts[i] = Integer.parseInt(ports[i]);
+        for (int i = 0; i < client.serverNum; i++) {
+            client.serverPorts[i] = Integer.parseInt(ports[i]);
+            client.fileName[i] = "../log/" + client.clientID + client.serverIDs[i] + ".csv";
+            client.spawnLogThread(i);
+        }
+        
         client.requestNum = 0;
         client.runClient();
     }
@@ -60,30 +72,34 @@ public class Client {
 
                     logger.log(Level.INFO, "Client " + clientID + " Connect to Server " + serverID + " IP " + serverAddress + " Port " + serverPort);
 
-                    result.get(1, TimeUnit.SECONDS);
+                    result.get(20, TimeUnit.SECONDS);
                     ByteBuffer buffer = ByteBuffer.wrap(payloadByte);
                     Future<Integer> writeval = client.write(buffer);
 
                     logger.log(Level.INFO, "Sent " + payload);
-
+                    
+                    long startTime = System.nanoTime();     
                     // end sending portion, wait for response
 
                     writeval.get();
                     buffer = ByteBuffer.allocate(1024);
 
                     // receive response
-                    int retry = 0;
+                    // int retry = 0;
                     boolean skip = false;
                     Future<Integer> readval = client.read(buffer);
                     while (!readval.isDone() && !readval.isCancelled()) {
-                        if (retry == 3){
-                            skip = true;
-                            logger.log(Level.INFO, "Client does not receive reply from " + serverID, "Client");
-                            break;
-                        }
-                        Thread.sleep(1000);
-                        retry++;
+                        // if (retry == 3){
+                        //     skip = true;
+                        //     logger.log(Level.INFO, "Client does not receive reply from " + serverID, "Client");
+                        //     break;
+                        // }
+                        Thread.sleep(1);
+                        // retry++;
                     }
+
+                    double estimatedTime = (System.nanoTime() - startTime) / 1000000;
+                    updateMetric(estimatedTime, i);
 
                     if (!skip){
                         String response = new String(buffer.array()).trim();
@@ -128,6 +144,19 @@ public class Client {
         }
     }
 
+    private void updateMetric (double elapsedTime, int server) {
+        if (elapsedTime > this.maxLatencyServer[server]) {
+            this.maxLatencyServer[server] = elapsedTime;
+        }
+        if (elapsedTime < this.minLatencyServer[server]) {
+            this.minLatencyServer[server] = elapsedTime;
+        }
+        avgLatencyServer[server] = (avgLatencyServer[server] * this.messageCount[server] + elapsedTime) / (this.messageCount[server] + 1);
+        this.messageCount[server] += 1; 
+
+        logger.log(Level.INFO, "elapsed time: " + elapsedTime, "Member");
+    }
+
     private String getClientManualInput (String output, String serverID) {
         System.out.println(output);
         BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
@@ -161,6 +190,43 @@ public class Client {
             }
         }
         return info.toString();
+    }
+
+    private void spawnLogThread(int server){
+        Thread logThread = new Thread(() -> {
+            logger.log(Level.INFO, "Spawn Log Thread");
+            while(!Thread.currentThread().isInterrupted()) {
+                try {
+                    writeLog(server);
+                    maxLatencyServer[server] = 0;
+                    minLatencyServer[server] = Double.POSITIVE_INFINITY;
+                    sleep(this.logInterval);
+                } catch (Exception e) {
+                    logger.log(Level.SEVERE, e.getMessage());
+                }
+            }
+        });
+        logThread.start();
+    }
+
+    public void writeLog(int server) throws IOException {
+        if (this.minLatencyServer[server] == Double.POSITIVE_INFINITY) {
+            return;
+        }
+        
+        Date date = new Date();
+        Timestamp timestamp = new Timestamp(date.getTime());
+        String currentTime = sdf3.format(timestamp);
+
+        File logFile = new File(fileName[server]);
+        logFile.getParentFile().mkdirs();
+        logFile.createNewFile(); 
+
+        BufferedWriter writer = new BufferedWriter(new FileWriter(fileName[server], true));
+        writer.append(currentTime + "," + this.minLatencyServer[server] + "," + this.maxLatencyServer[server] + "," + this.avgLatencyServer[server]);
+        writer.append("\n");
+        
+        writer.close();
     }
 
 }

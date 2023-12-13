@@ -1,3 +1,6 @@
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousServerSocketChannel;
@@ -5,6 +8,7 @@ import java.nio.channels.AsynchronousSocketChannel;
 import java.net.*;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,8 +47,10 @@ public class Server extends Thread{
     private int iAmReady;
     private List<Integer> high_watermark_request_num = new ArrayList<Integer>();
 
-    private final int LFDTimeout = 10;
+    private final int LFDTimeout = 20;
     private int LFDwait = 0;
+    private long latency = 10000;
+    private boolean injectLatency = false;
 
     private int checkpointCount;
     private int checkpointFrequency;
@@ -53,6 +59,8 @@ public class Server extends Thread{
 
     ScheduledExecutorService executorService = Executors.newScheduledThreadPool(1);
 
+    private int logInterval = 10000;
+    private String fileName;
     private static final SimpleDateFormat sdf3 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
     public void startServer()
@@ -92,6 +100,7 @@ public class Server extends Thread{
         server.high_watermark_request_num.add(1, 0);    // c2
         server.high_watermark_request_num.add(2, 0);    // c3
 
+        server.fileName = "../log/" + server.serverID + ".csv";
 
         server.startServer();
     }
@@ -193,6 +202,12 @@ public class Server extends Thread{
                 if (iAmReady == 1){
                     logger.log(Level.INFO,
                     "my_state_" + serverID + " = " + this.serverStatus + " before processing " + message, "State");
+
+                    if (this.injectLatency) {
+                        logger.log(Level.INFO, "latency...");
+                        sleep(this.latency);
+                    }
+
                     str = processClientMessage(message);
                     logger.log(Level.INFO,
                         "my_state_" + this.serverID + " = " + this.serverStatus + " after processing " + message, "State");
@@ -238,6 +253,9 @@ public class Server extends Thread{
                     if (this.LFDwait > this.LFDTimeout) {
                         logger.log(Level.SEVERE, "Did not detect LFD, server terminate");
                         mainThread.interrupt();
+                        if (this.client != null) {
+                            client.close();
+                        }
                         System.exit(0);
                     }
                 } catch(Exception e) {
@@ -260,6 +278,12 @@ public class Server extends Thread{
             logger.log(Level.INFO, "Resuming server...");
             this.run = true;
             run();
+        } else if (command.toLowerCase().equals("latency")) {
+            logger.log(Level.INFO, "Inject latency...");
+            this.injectLatency = true;
+        } else if (command.toLowerCase().equals("normal")) {
+            logger.log(Level.INFO, "Recover server...");
+            this.injectLatency = false;
         } else {
             try{
                 if (this.isPrimary){
@@ -413,5 +437,5 @@ public class Server extends Thread{
 
     private byte[] serverInputToByteArr(String payload) {
         return payload.getBytes();
-    }
+        }
 }

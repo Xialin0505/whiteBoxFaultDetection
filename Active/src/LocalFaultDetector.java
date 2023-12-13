@@ -1,11 +1,16 @@
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousServerSocketChannel;
 import java.nio.channels.AsynchronousSocketChannel;
+import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.Scanner;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -38,6 +43,17 @@ public class LocalFaultDetector extends Thread{
     private AsynchronousServerSocketChannel asyncServer;
     private AsynchronousSocketChannel serverClient;
     private int serverStatus; // 0 -> initial server run, 1 -> server running regularly, 2 -> server died and need recover
+    private int timeoutCount = 0;
+    private int maxtimeoutCount = 5;
+
+    private double maxLatencyServer = 0;
+    private double minLatencyServer = Double.POSITIVE_INFINITY;
+    private double avgLatencyServer = 0;
+    private int messagesCount = 0;
+
+    private int logInterval = 10000;
+    private String fileName;
+    private static final SimpleDateFormat sdf3 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
     public static void main (String[] args) {
         LocalFaultDetector lfd = new LocalFaultDetector();
@@ -50,6 +66,7 @@ public class LocalFaultDetector extends Thread{
         lfd.gfdAddress = args[6];
         lfd.gfdPort = Integer.parseInt(args[7]);
         lfd.serverStatus = 0;
+        lfd.fileName = "../log/" + lfd.lfdID + lfd.serverID + ".csv";
         lfd.runFaultDetector();
     }
 
@@ -68,6 +85,7 @@ public class LocalFaultDetector extends Thread{
         logger.log(Level.INFO, "Registering LFD to GFD ...");
         sendUpdateToGfd("register", serverAddress, lfdPort);
         spawnLFDThread();
+        spawnLogThread();
         spawnLFDServer();
     }
 
@@ -137,6 +155,7 @@ public class LocalFaultDetector extends Thread{
         Future<Integer> writeval = client.write(buffer);
         logger.log(Level.INFO, "Sent " + message, true);
 
+        long startTime = System.nanoTime();
 
         writeval.get();
         buffer = ByteBuffer.allocate(1024);
@@ -153,6 +172,9 @@ public class LocalFaultDetector extends Thread{
             }
             this.sleep(1000);
         }
+
+        double estimatedTime = (System.nanoTime() - startTime) / 1000000;
+        updateMetric(estimatedTime);
 
         if (isTimeOut) {
             timeoutProcess();
@@ -264,6 +286,10 @@ public class LocalFaultDetector extends Thread{
     private void timeoutProcess(){
         // run timeout process
         // if (serverStatus == 0) it's still not initialized, we do nothing
+        timeoutCount ++;
+        if (timeoutCount <= maxtimeoutCount) {
+            return;
+        }
         if (serverStatus == 1) {
             serverStatus = 2; // server failed connection
         }
@@ -426,6 +452,56 @@ public class LocalFaultDetector extends Thread{
             logger.log(Level.SEVERE, e.getMessage());
         }
 
+    }
+
+    private void spawnLogThread(){
+        Thread logThread = new Thread(() -> {
+            logger.log(Level.INFO, "Spawn Log Thread");
+            while(!Thread.currentThread().isInterrupted()) {
+                try {
+                    writeLog();
+                    maxLatencyServer = 0;
+                    minLatencyServer = Double.POSITIVE_INFINITY;
+                    sleep(this.logInterval);
+                } catch (Exception e) {
+                    logger.log(Level.SEVERE, e.getMessage());
+                }
+            }
+        });
+        logThread.start();
+    }
+
+    private void updateMetric (double elapsedTime) {
+        if (elapsedTime > this.maxLatencyServer) {
+            this.maxLatencyServer = elapsedTime;
+        }
+        if (elapsedTime < this.minLatencyServer) {
+            this.minLatencyServer = elapsedTime;
+        }
+        avgLatencyServer = (avgLatencyServer * this.messagesCount + elapsedTime) / (this.messagesCount + 1);
+        this.messagesCount += 1; 
+
+        logger.log(Level.INFO, "elapsed time: " + elapsedTime, "Member");
+    }
+
+    public void writeLog() throws IOException {
+        if (this.minLatencyServer == Double.POSITIVE_INFINITY) {
+            return;
+        }
+        
+        Date date = new Date();
+        Timestamp timestamp = new Timestamp(date.getTime());
+        String currentTime = sdf3.format(timestamp);
+
+        File logFile = new File(fileName);
+        logFile.getParentFile().mkdirs();
+        logFile.createNewFile(); 
+
+        BufferedWriter writer = new BufferedWriter(new FileWriter(fileName, true));
+        writer.append(currentTime + "," + this.minLatencyServer + "," + this.maxLatencyServer + "," + this.avgLatencyServer);
+        writer.append("\n");
+        
+        writer.close();
     }
 
 }

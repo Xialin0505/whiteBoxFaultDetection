@@ -8,4 +8,4 @@ serverIP=$RMIP
 
 javac --source-path src -d bin src/ReplicationManager.java
 cd bin
-java ReplicationManager $serverID $serverIP $serverPort
+java ReplicationManager $serverID $serverIP $serverPort $GFDIP $GFDPort
