@@ -25,11 +25,12 @@ def parseRaw(arr):
 
     return timeline, minTime, maxTime, avgTime
 
-def plotLineGraph(timeline, minTime, maxTime, avgTime):
+def plotLineGraph(timeline, minTime, maxTime, avgTime, title):
     plt.plot(timeline, minTime, label = "min latency") 
     plt.plot(timeline, maxTime, label = "max latency") 
     plt.plot(timeline, avgTime, label = "avg latency")
     plt.xticks(fontsize=5)
+    plt.title(title) 
     plt.legend() 
     plt.show()
 
@@ -45,12 +46,12 @@ def generateLFDs():
     for i in LFDlist:
         filename = "./log/" + i + ".csv"
         if os.path.isfile(filename):
-            generateLFD(filename)
+            generateLFD(filename, i)
 
-def generateLFD(fileName):
+def generateLFD(fileName, title):
     arr = np.genfromtxt(fileName, delimiter=",", dtype = headings)
     timeline, minTime, maxTime, avgTime = parseRaw(arr)
-    plotLineGraph(timeline, minTime, maxTime, avgTime)
+    plotLineGraph(timeline, minTime, maxTime, avgTime, title)
 
 def generateGFDs():
     LFDlist = ["LFD1", "LFD2", "LFD3"]
@@ -60,10 +61,10 @@ def generateGFDs():
         if os.path.isfile(filename):
             generateGFD(filename)
 
-def generateGFD(fileName):
+def generateGFD(fileName, title):
     arr = np.genfromtxt(fileName, delimiter=",", dtype = headings)
     timeline, minTime, maxTime, avgTime = parseRaw(arr)
-    plotLineGraph(timeline, minTime, maxTime, avgTime)
+    plotLineGraph(timeline, minTime, maxTime, avgTime, title)
 
 def generateServers():
     serverClient = ["C1S1", "C2S1", "C3S1", "C1S2", "C2S2", "C3S2", "C1S3", "C2S3", "C3S3"]
@@ -71,12 +72,12 @@ def generateServers():
     for i in serverClient:
         filename = "./log/" + i + ".csv"
         if os.path.isfile(filename):
-            generateServer(filename)
+            generateServer(filename, i)
 
-def generateServer(fileName):
+def generateServer(fileName, title):
     arr = np.genfromtxt(fileName, delimiter=",", dtype = headings)
     timeline, minTime, maxTime, avgTime = parseRaw(arr)
-    plotLineGraph(timeline, minTime, maxTime, avgTime)
+    plotLineGraph(timeline, minTime, maxTime, avgTime, title)
 
 if __name__=="__main__": 
     if (sys.argv[1] == "client"):
