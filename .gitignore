@@ -1,4 +1,4 @@
-./Active/bin/*
-./Passive/bin/*
-./Active/log/*
-./Passive/log/*
+Active/bin/*
+Passive/bin/*
+Active/log/*
+Passive/log/*
