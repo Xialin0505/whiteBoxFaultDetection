@@ -29,7 +29,7 @@ def plotLineGraph(timeline, minTime, maxTime, avgTime, title):
     plt.plot(timeline, minTime, label = "min latency") 
     plt.plot(timeline, maxTime, label = "max latency") 
     plt.plot(timeline, avgTime, label = "avg latency")
-    plt.xticks(fontsize=5)
+    plt.xticks(fontsize=5, rotation=90)
     plt.title(title) 
     plt.legend() 
     plt.show()
