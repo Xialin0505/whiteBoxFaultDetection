@@ -38,7 +38,7 @@ def generateRM():
     arr = np.genfromtxt("./log/RMGFD.csv", delimiter=",", dtype = headings)
 
     timeline, minTime, maxTime, avgTime = parseRaw(arr)
-    plotLineGraph(timeline, minTime, maxTime, avgTime)
+    plotLineGraph(timeline, minTime, maxTime, avgTime, "RMGFD")
 
 def generateLFDs():
     LFDlist = ["LFD1S1", "LFD2S2", "LFD3S3"]
@@ -59,7 +59,7 @@ def generateGFDs():
     for i in LFDlist:
         filename = "./log/" + i + ".csv"
         if os.path.isfile(filename):
-            generateGFD(filename)
+            generateGFD(filename, i)
 
 def generateGFD(fileName, title):
     arr = np.genfromtxt(fileName, delimiter=",", dtype = headings)
